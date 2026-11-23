@@ -83,6 +83,8 @@
 
   function chainOf(p) { return p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain'; }
 
+  function secondChainOf(p) { return p.chains && p.chains.length > 1 ? p.chains[1] : null; }
+
   function capitalFor(p) {
     if (p.tvl_usd >= 5e9) return 250;
     if (p.tvl_usd >= 1e9) return 150;
@@ -124,6 +126,7 @@
 
   function farmSteps(p) {
     var chain = chainOf(p);
+    var second = secondChainOf(p);
     var capital = capitalFor(p);
     var hold = holdDaysFor(p.age_days);
     var gas = capital >= 150 ? 8 : 4;
@@ -133,7 +136,11 @@
       { text: 'Make one qualifying action each week on ' + chain + ', such as a deposit, a borrow, a swap or a vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
       { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
       { text: 'Before you withdraw, open the protocol\'s own points or rewards page and claim only from the link it publishes.', cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
-      { text: 'Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.', cost: 'nothing but the log', time: '5 minutes' }
+      { text: 'Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.', cost: 'nothing but the log', time: '5 minutes' },
+      second === null
+        ? { text: 'Use the protocol\'s second feature once a week — a swap, a vote or a second pool — so the wallet is not a one-action address.', cost: 'about $2 of gas a week', time: '10 minutes a week' }
+        : { text: 'Repeat the qualifying action on ' + second + ' as well, so the wallet shows activity on more than one chain.', cost: 'about $2 of gas on ' + second, time: '10 minutes a week' },
+      { text: 'Write the exit down before any token is announced: unwind half the $' + capital + ' position after ' + hold + ' days and keep the rest until the claim is live.', cost: 'no cost to plan; each unwind costs gas', time: '10 minutes' }
     ].map(stepText);
   }
 
@@ -193,6 +200,88 @@
   }
 
   // ---------------------------------------------------------------------------
+  // The category strip: the visible rows summarised by category, strongest
+  // total value first. The same shape lib/model.ts writes into data.js as
+  // DATA.categories, re-derived here from the rows the filters leave visible,
+  // so the strip always describes the board on screen. On the Live token tab
+  // the value is the market cap, since those protocols already trade.
+  // ---------------------------------------------------------------------------
+
+  function summarizeByCategory(list, valueOf) {
+    var byCat = {};
+    list.forEach(function (r) {
+      var c = r.category || 'Other';
+      var v = valueOf(r);
+      if (!byCat[c]) byCat[c] = { category: c, count: 0, total_tvl_usd: 0, total_implied_usd: 0, best_name: r.name, best_implied_usd: v };
+      var s = byCat[c];
+      s.count += 1;
+      s.total_tvl_usd += r.tvl_usd;
+      s.total_implied_usd += v;
+      if (v > s.best_implied_usd) { s.best_name = r.name; s.best_implied_usd = v; }
+    });
+    return Object.keys(byCat).map(function (k) { return byCat[k]; })
+      .sort(function (a, b) { return b.total_implied_usd - a.total_implied_usd || (a.category < b.category ? -1 : a.category > b.category ? 1 : 0); });
+  }
+
+  function categoryPanel() {
+    var summary;
+    var valueLabel = 'implied value';
+    if (state.tab === 'live') {
+      summary = summarizeByCategory(DATA.live, function (r) { return r.mcap_usd || 0; });
+      valueLabel = 'market cap';
+    } else if (state.q || state.category !== 'all' || state.chain !== 'all') {
+      summary = summarizeByCategory(rows(), function (r) { return r.implied_value_usd; });
+    } else {
+      summary = DATA.categories || summarizeByCategory(rows(), function (r) { return r.implied_value_usd; });
+    }
+    if (summary.length === 0) return el('div', { class: 'breakdown', 'aria-label': 'Board by category' });
+    return el('div', { class: 'breakdown', 'aria-label': 'Board by category' },
+      summary.map(function (s) {
+        return el('div', { class: 'cat' },
+          el('b', { text: s.category }),
+          el('span', { class: 'sub', text: s.count + (s.count === 1 ? ' protocol' : ' protocols') }),
+          el('span', { text: 'TVL ' + fmtUsd(s.total_tvl_usd) }),
+          el('span', { text: valueLabel + ' ' + fmtUsd(s.total_implied_usd) }),
+          el('span', { class: 'sub', text: 'Best: ' + s.best_name })
+        );
+      })
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // CSV export: the rows on screen, as a file. Pure client-side: the data is
+  // already in the page, so the button builds the file and downloads it with
+  // no request. The live tab exports the live protocols with their market cap
+  // in the value column, since they have no implied value and no age on record.
+  // ---------------------------------------------------------------------------
+
+  function csvCell(v) {
+    var s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  function downloadCsv() {
+    var list = state.tab === 'pre-token'
+      ? sortedRows(rows())
+      : DATA.live.map(function (r) {
+          return { rank: 'live', name: r.name, category: r.category, chains: r.chains, tvl_usd: r.tvl_usd, change_7d: r.change_7d, age_days: null, implied_value_usd: r.mcap_usd };
+        });
+    var lines = [['rank', 'name', 'category', 'chains', 'tvl_usd', 'change_7d', 'age_days', 'implied_value_usd'].map(csvCell).join(',')];
+    list.forEach(function (r) {
+      lines.push([r.rank, r.name, r.category || 'Other', (r.chains || []).join(' '), r.tvl_usd, r.change_7d, r.age_days, r.implied_value_usd].map(csvCell).join(','));
+    });
+    var blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'token-radar-' + state.tab + '-' + DATA.as_of + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  // ---------------------------------------------------------------------------
   // The page's sections: header, lede, controls, board or live table, model panel
   // ---------------------------------------------------------------------------
 
@@ -239,11 +328,13 @@
     chain.addEventListener('change', function () { state.chain = chain.value; writeHash(); render(); });
     var pre = el('button', { type: 'button', 'aria-pressed': state.tab === 'pre-token' ? 'true' : 'false', text: 'Pre-token', onclick: function () { state.tab = 'pre-token'; render(); } });
     var live = el('button', { type: 'button', 'aria-pressed': state.tab === 'live' ? 'true' : 'false', text: 'Live token', onclick: function () { state.tab = 'live'; render(); } });
+    var csv = el('button', { class: 'button', type: 'button', text: 'Export CSV', onclick: downloadCsv });
     return el('div', { class: 'controls' },
       el('div', { class: 'field' }, el('label', { for: 'q', text: 'Search' }), search),
       el('div', { class: 'field' }, el('label', { for: 'category', text: 'Category' }), cat),
       el('div', { class: 'field' }, el('label', { for: 'chain', text: 'Chain' }), chain),
       el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Token status' }), el('div', { class: 'tabs' }, pre, live)),
+      el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Visible rows' }), csv),
       el('span', { class: 'count', text: state.tab === 'pre-token' ? rows().length + ' rows shown' : DATA.live.length + ' live-token protocols' })
     );
   }
@@ -409,6 +500,7 @@
     shell.appendChild(header());
     shell.appendChild(lede());
     shell.appendChild(controls());
+    shell.appendChild(categoryPanel());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
     if (state.tab === 'pre-token') shell.appendChild(modelPanel());
     shell.appendChild(el('p', { class: 'foot', text: 'Snapshot ' + DATA.as_of + ' from DefiLlama. A protocol records no token, never that it has none. Implied value is this radar\'s own estimate.' }));

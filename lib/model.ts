@@ -172,6 +172,7 @@ export interface RadarData {
   board_size: number;
   early_size: number;
   live_size: number;
+  categories: CategorySummary[];
   rows: RadarRow[];
   live: LiveRow[];
 }
@@ -342,7 +343,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
 }
 
 // ---------------------------------------------------------------------------
-// Farm plans: six steps per protocol, derived from its own record
+// Farm plans: eight steps per protocol, derived from its own record
 // ---------------------------------------------------------------------------
 
 /** A step as one string: its action, then its cost and time, within the gate's 20..600 characters. */
@@ -394,12 +395,15 @@ function actionFor(p: SnapshotProtocol, capital: number, chain: string): string 
 }
 
 /**
- * A protocol's farm plan: six steps, each an action with a cost and a time. The plan is
+ * A protocol's farm plan: eight steps, each an action with a cost and a time. The plan is
  * derived from the protocol's own record (category, chains, TVL, age), never from a
- * hand-written list.
+ * hand-written list. The last two steps close the plan: repeat the work on a second
+ * chain where the protocol runs on one, and write the exit down before any token is
+ * announced, so the farmer never has to decide in a hurry.
  */
 export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const chain = chainOf(p);
+  const second = secondChainOf(p);
   const capital = capitalFor(p);
   const hold = holdDaysFor(age);
   const action = actionFor(p, capital, chain);
@@ -435,7 +439,77 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       cost: 'nothing but the log',
       time: '5 minutes',
     },
+    second === null
+      ? {
+          text: `Use the protocol's second feature once a week — a swap, a vote or a second pool — so the wallet is not a one-action address.`,
+          cost: 'about $2 of gas a week',
+          time: '10 minutes a week',
+        }
+      : {
+          text: `Repeat the qualifying action on ${second} as well, so the wallet shows activity on more than one chain.`,
+          cost: `about $2 of gas on ${second}`,
+          time: '10 minutes a week',
+        },
+    {
+      text: `Write the exit down before any token is announced: unwind half the $${capital} position after ${hold} days and keep the rest until the claim is live.`,
+      cost: 'no cost to plan; each unwind costs gas',
+      time: '10 minutes',
+    },
   ];
+}
+
+/** The second chain a protocol names, or null when it runs on one chain only. */
+function secondChainOf(p: SnapshotProtocol): string | null {
+  return p.chains.length > 1 ? p.chains[1]! : null;
+}
+
+// ---------------------------------------------------------------------------
+// The board by category: what the dashboard's summary strip shows
+// ---------------------------------------------------------------------------
+
+/** One category's share of the board: how many protocols, how much TVL and implied value, and the strongest one. */
+export interface CategorySummary {
+  category: string;
+  count: number;
+  total_tvl_usd: number;
+  total_implied_usd: number;
+  best_slug: string;
+  best_name: string;
+  best_implied_usd: number;
+}
+
+/**
+ * The board summarised by category, strongest total implied value first. A protocol
+ * with no category counts as Other. The strongest protocol of a category is the one
+ * with the highest implied value; the board is already ranked, so the first row met
+ * wins a tie. The dashboard reads this from data.js for its summary strip, and
+ * re-derives the same shape from the visible rows when a filter is active.
+ */
+export function categoryBreakdown(board: BoardRow[]): CategorySummary[] {
+  const byCategory = new Map<string, { count: number; total_tvl_usd: number; total_implied_usd: number; best: BoardRow }>();
+  for (const row of board) {
+    const category = row.category ?? 'Other';
+    const found = byCategory.get(category);
+    if (found === undefined) {
+      byCategory.set(category, { count: 1, total_tvl_usd: row.tvl_usd, total_implied_usd: row.implied_value_usd, best: row });
+    } else {
+      found.count += 1;
+      found.total_tvl_usd += row.tvl_usd;
+      found.total_implied_usd += row.implied_value_usd;
+      if (row.implied_value_usd > found.best.implied_value_usd) found.best = row;
+    }
+  }
+  return [...byCategory.entries()]
+    .map(([category, s]) => ({
+      category,
+      count: s.count,
+      total_tvl_usd: s.total_tvl_usd,
+      total_implied_usd: s.total_implied_usd,
+      best_slug: s.best.slug,
+      best_name: s.best.name,
+      best_implied_usd: s.best.implied_value_usd,
+    }))
+    .sort((a, b) => b.total_implied_usd - a.total_implied_usd || (a.category < b.category ? -1 : a.category > b.category ? 1 : 0));
 }
 
 // ---------------------------------------------------------------------------
@@ -494,6 +568,7 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     board_size: board.length,
     early_size: early,
     live_size: live.length,
+    categories: categoryBreakdown(board),
     rows: board.map(radarRow),
     live,
   };

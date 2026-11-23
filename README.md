@@ -26,7 +26,7 @@ No protocol names are hardcoded: the same function scores every protocol from th
 
 ## The dashboard
 
-Dark slate + amber theme. The board is sortable (rank, TVL, 7d growth, age, implied value) and filterable (search, category, chain), with Pre-token / Live-token tabs. Every protocol opens a detail view showing the full model breakdown (TVL, growth, age, chains, all three multipliers, implied value — recomputed live on the page, matching `board.json`) and a 6-step farm plan with what each step costs and how long it takes.
+Dark slate + amber theme. The board is sortable (rank, TVL, 7d growth, age, implied value) and filterable (search, category, chain), with Pre-token / Live-token tabs. A summary strip above the board breaks the visible rows down by category — protocol count, total TVL, total implied value and the strongest protocol of each — and updates with the filters and the tab. An Export CSV button downloads the rows on screen. Every protocol opens a detail view showing the full model breakdown (TVL, growth, age, chains, all three multipliers, implied value — recomputed live on the page, matching `board.json`) and an 8-step farm plan with what each step costs and how long it takes.
 
 ## Files
 
