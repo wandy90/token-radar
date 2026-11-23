@@ -1,13 +1,19 @@
-// Token Radar's dashboard (radar-2). It reads window.RADAR (written beside dashboard/ by
-// main.ts) and renders the ranked board, filters, a per-protocol detail view with the model's
-// own inputs and the protocol's farm plan. No network: every byte it shows is in data.js.
+// Token Radar's dashboard (radar-2). It reads window.RADAR — the dataset main.ts
+// writes beside dashboard/ as data.js — and renders the ranked board, the filters,
+// and a per-protocol detail view with the model's own inputs and the protocol's farm
+// plan. No network: every byte it shows is already in data.js.
 (function () {
   'use strict';
 
   var DATA = window.RADAR;
   if (!DATA) return;
+
   var app = document.getElementById('board');
   var state = { q: '', category: 'all', chain: 'all', tab: 'pre-token', sort: 'implied', dir: -1, selected: null };
+
+  // ---------------------------------------------------------------------------
+  // Formatting: money, growth, age
+  // ---------------------------------------------------------------------------
 
   function fmtUsd(n) {
     if (n === null || n === undefined || !isFinite(n)) return 'n/a';
@@ -16,19 +22,26 @@
     if (Math.abs(n) >= 1e3) return '$' + Math.round(n / 1e3) + 'K';
     return '$' + Math.round(n);
   }
+
   function fmtPct(n) {
     if (n === null || n === undefined || !isFinite(n)) return 'n/a';
     return (n > 0 ? '+' : '') + n.toFixed(2) + '%';
   }
+
   function fmtAge(days) {
     if (days === null || days === undefined) return 'unknown';
     if (days >= 365) return (days / 365).toFixed(1) + 'y';
     return Math.max(0, Math.round(days)) + 'd';
   }
-  // The radar-2 model in one function: the page recomputes a row from the snapshot figures and
-  // checks the number board.json carries, so the page and the board are the same arithmetic.
+
+  // ---------------------------------------------------------------------------
+  // The model, in the page: recompute a row from the snapshot figures and check
+  // the number board.json carries, so the page and the board are the same arithmetic.
+  // ---------------------------------------------------------------------------
+
   function impliedOf(row, model) {
-    var growth = Math.min(model.growth_cap, Math.max(model.growth_floor, row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d));
+    var change = row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d;
+    var growth = Math.min(model.growth_cap, Math.max(model.growth_floor, change));
     var weight = growth >= 0 ? model.growth_weight_up : model.growth_weight_down;
     var growthMult = 1 + (growth / 100) * weight;
     var age = row.age_days === null || row.age_days === undefined ? model.unknown_age_days : row.age_days;
@@ -37,6 +50,10 @@
     var breadth = 1 + model.breadth_per_chain * extra;
     return Math.max(1, Math.round(row.tvl_usd * model.base_multiple * growthMult * maturity * breadth));
   }
+
+  // ---------------------------------------------------------------------------
+  // A tiny DOM helper: el('div', {class: 'x', text: 'y'}, child, [children])
+  // ---------------------------------------------------------------------------
 
   function el(tag, attrs) {
     var node = document.createElement(tag);
@@ -58,21 +75,28 @@
     return node;
   }
 
-  // The farm plan is the same derivation main.ts writes to board.json: category, chains, TVL and
-  // age decide the action, the capital, the hold and every cost and time. No name is special-cased.
+  // ---------------------------------------------------------------------------
+  // Farm plans: the same derivation main.ts writes to board.json. Category,
+  // chains, TVL and age decide the action, the capital, the hold and every cost
+  // and time. No name is special-cased.
+  // ---------------------------------------------------------------------------
+
   function chainOf(p) { return p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain'; }
+
   function capitalFor(p) {
     if (p.tvl_usd >= 5e9) return 250;
     if (p.tvl_usd >= 1e9) return 150;
     if (p.tvl_usd >= 1e8) return 100;
     return 50;
   }
+
   function holdDaysFor(age) {
     if (age === null || age === undefined) return 30;
     if (age < 180) return 60;
     if (age < 365) return 45;
     return 30;
   }
+
   function actionFor(p, capital, chain) {
     var c = (p.category || '').toLowerCase();
     var name = p.name;
@@ -90,12 +114,14 @@
     if (c.indexOf('privacy') >= 0) return 'Use $' + capital + ' through ' + name + "'s private pool on " + chain + ' and keep the receipt.';
     return 'Deposit $' + capital + ' of USDC into ' + name + ' on ' + chain + ' and keep the position open.';
   }
+
   function stepText(step) {
     var s = step.text + ' Cost: ' + step.cost + '. Time: ' + step.time + '.';
     if (s.length > 600) s = s.slice(0, 596) + '...';
     if (s.length < 20) s = s + ' Hold the position and check the protocol\'s own page.';
     return s;
   }
+
   function farmSteps(p) {
     var chain = chainOf(p);
     var capital = capitalFor(p);
@@ -111,6 +137,10 @@
     ].map(stepText);
   }
 
+  // ---------------------------------------------------------------------------
+  // Shareable state: the search, filters and open protocol live in the URL hash.
+  // ---------------------------------------------------------------------------
+
   function readHash() {
     var hash = window.location.hash.replace(/^#/, '');
     if (!hash) return;
@@ -120,6 +150,7 @@
     if (params.get('category')) state.category = params.get('category');
     if (params.get('chain')) state.chain = params.get('chain');
   }
+
   function writeHash() {
     var params = new URLSearchParams();
     if (state.q) params.set('q', state.q);
@@ -131,6 +162,10 @@
     else window.history.replaceState(null, '', window.location.pathname + window.location.search);
   }
 
+  // ---------------------------------------------------------------------------
+  // Filtering and sorting the board
+  // ---------------------------------------------------------------------------
+
   function rows() {
     var q = state.q.trim().toLowerCase();
     return DATA.rows.filter(function (r) {
@@ -141,6 +176,7 @@
       return hay.indexOf(q) >= 0;
     });
   }
+
   function sortedRows(list) {
     var key = state.sort;
     return list.slice().sort(function (a, b) {
@@ -155,6 +191,10 @@
       return a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0;
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // The page's sections: header, lede, controls, board or live table, model panel
+  // ---------------------------------------------------------------------------
 
   function header() {
     return el('header', { class: 'top' },
@@ -307,6 +347,10 @@
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // The detail dialog: one protocol's model breakdown and farm plan
+  // ---------------------------------------------------------------------------
+
   var dialog = el('dialog', { class: 'detail', id: 'detail', 'aria-labelledby': 'detail-title' });
   dialog.addEventListener('close', function () { state.selected = null; writeHash(); });
 
@@ -354,6 +398,10 @@
       dialog.setAttribute('open', '');
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Render the whole page, then keep it live
+  // ---------------------------------------------------------------------------
 
   function render() {
     app.textContent = '';
